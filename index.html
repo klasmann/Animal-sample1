@@ -5,15 +5,123 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>ANIMAL SAMPLE — The Lab Run</title>
 <style>
-html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1114;color:#eee;font-family:system-ui,-apple-system,Segoe UI,sans-serif}canvas{display:block;width:100vw;height:100vh;image-rendering:auto}.hint{position:fixed;left:14px;bottom:10px;opacity:.6;font-size:12px;pointer-events:none}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1114;color:#eee;font-family:system-ui,-apple-system,Segoe UI,sans-serif;touch-action:none}
+canvas{display:block;width:100vw;height:100vh;image-rendering:auto}
+.hint{position:fixed;left:14px;bottom:10px;opacity:.6;font-size:12px;pointer-events:none}
+.touch{display:none;position:fixed;left:0;right:0;bottom:0;height:150px;pointer-events:none;z-index:10}
+.touch button{pointer-events:auto;width:72px;height:72px;border:2px solid rgba(255,255,255,.35);border-radius:18px;background:rgba(15,23,25,.72);color:#fff;font-size:30px;font-weight:800;touch-action:none;-webkit-user-select:none;user-select:none}
+.touch .left{position:absolute;left:18px;bottom:24px}
+.touch .right{position:absolute;left:104px;bottom:24px}
+.touch .jump{position:absolute;right:18px;bottom:24px;width:92px}
+@media (pointer:coarse), (max-width:900px){
+  .touch{display:block}
+  .hint{display:none}
+}
 </style></head>
-<body><canvas id="game"></canvas><div class="hint">A/D oder ←/→ · Springen: W/↑/Leertaste · E: Interaktion · P: Pause · R: Neustart</div>
+<body><canvas id="game"></canvas>
+<div class="hint">A/D oder ←/→ · Springen: W/↑/Leertaste · E: Interaktion · P: Pause · R: Neustart</div>
+<div class="touch" aria-label="Touch-Steuerung">
+  <button class="left" id="touchLeft" aria-label="Nach links">◀</button>
+  <button class="right" id="touchRight" aria-label="Nach rechts">▶</button>
+  <button class="jump" id="touchJump" aria-label="Springen">JUMP</button>
+<button id="musicToggle" aria-label="Musik ein oder aus" style="position:absolute;right:18px;bottom:108px;width:58px;height:42px;border:2px solid rgba(255,255,255,.35);border-radius:12px;background:rgba(15,23,25,.72);color:#fff;font-size:20px;touch-action:none">♪</button>
+</div>
 <script>
 'use strict';
 const c=document.getElementById('game'),ctx=c.getContext('2d');
 let W=innerWidth,H=innerHeight,D=devicePixelRatio||1;function resize(){W=innerWidth;H=innerHeight;D=Math.min(devicePixelRatio||1,2);c.width=W*D;c.height=H*D;ctx.setTransform(D,0,0,D,0,0)}addEventListener('resize',resize);resize();
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), lerp=(a,b,t)=>a+(b-a)*t;
-const keys=new Set();addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp',' ','w','a','s','d','e','p','r','W','A','S','D','E','P','R'].includes(e.key))e.preventDefault();keys.add(e.key); if(['p','P'].includes(e.key)&&state==='play')paused=!paused;if(['r','R'].includes(e.key))reset();});addEventListener('keyup',e=>keys.delete(e.key));
+
+/* --- Animal Sample: original procedural 2-D platformer soundtrack --- */
+let audioCtx = null, musicTimer = null, musicOn = true, musicStep = 0;
+const masterVol = 0.075;
+
+function initAudio(){
+  if(!audioCtx){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if(audioCtx.state === 'suspended') audioCtx.resume();
+  if(musicOn && !musicTimer){
+    musicStep = 0;
+    playMusicStep();
+    musicTimer = setInterval(playMusicStep, 220);
+  }
+}
+
+function tone(freq, duration=.12, type='square', volume=.035, when=0){
+  if(!audioCtx || !musicOn) return;
+  const t = audioCtx.currentTime + when;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(Math.max(volume,0.0002), t+0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t+duration);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t+duration+.02);
+}
+
+function noise(duration=.05, volume=.018, when=0){
+  if(!audioCtx || !musicOn) return;
+  const t=audioCtx.currentTime+when;
+  const buffer=audioCtx.createBuffer(1, audioCtx.sampleRate*duration, audioCtx.sampleRate);
+  const data=buffer.getChannelData(0);
+  for(let i=0;i<data.length;i++) data[i]=(Math.random()*2-1)*(1-i/data.length);
+  const src=audioCtx.createBufferSource();
+  const gain=audioCtx.createGain();
+  gain.gain.value=volume;
+  src.buffer=buffer; src.connect(gain).connect(audioCtx.destination);
+  src.start(t);
+}
+
+const lead=[659,0,784,988,0,784,659,523,587,0,659,784,0,587,523,392,
+            659,0,784,988,1047,988,784,659,587,0,523,587,659,0,523,392];
+const bass=[131,131,165,165,147,147,196,196,131,131,165,165,110,110,147,147];
+
+function playMusicStep(){
+  if(!audioCtx || !musicOn) return;
+  const i=musicStep%32;
+  if(lead[i]) tone(lead[i],.16,'square',.018);
+  if(i%2===0) tone(bass[(i/2)%16],.18,'triangle',.014);
+  if(i%4===0) noise(.045,.012);
+  if(i%8===4) noise(.035,.009);
+  musicStep++;
+}
+
+function toggleMusic(){
+  musicOn=!musicOn;
+  const b=document.getElementById('musicToggle');
+  if(b) b.textContent=musicOn?'♪':'×';
+  if(musicOn){
+    initAudio();
+  }else if(musicTimer){
+    clearInterval(musicTimer); musicTimer=null;
+  }
+}
+
+/* Short arcade SFX layered over the soundtrack. */
+function sfxJump(){ initAudio(); tone(523,.07,'square',.035); tone(784,.09,'triangle',.025,.05); }
+function sfxCollect(){ initAudio(); tone(880,.06,'square',.03); tone(1175,.10,'square',.026,.06); }
+function sfxHit(){ initAudio(); tone(180,.10,'sawtooth',.035); }
+function sfxWin(){ initAudio(); [523,659,784,1047].forEach((f,n)=>tone(f,.16,'square',.025,n*.11)); }
+
+const keys=new Set();
+addEventListener('keydown',e=>{initAudio();if(['ArrowLeft','ArrowRight','ArrowUp',' ','w','a','s','d','e','p','r','W','A','S','D','E','P','R'].includes(e.key))e.preventDefault();keys.add(e.key); if(['p','P'].includes(e.key)&&state==='play')paused=!paused;if(['r','R'].includes(e.key))reset();});
+addEventListener('keyup',e=>keys.delete(e.key));
+
+function touchKey(button,id){
+  const down=e=>{e.preventDefault();initAudio();keys.add(id);if(id==='ArrowUp')sfxJump();if(state==='title')start();};
+  const up=e=>{e.preventDefault();keys.delete(id);};
+  button.addEventListener('pointerdown',down);
+  button.addEventListener('pointerup',up);
+  button.addEventListener('pointercancel',up);
+  button.addEventListener('pointerleave',up);
+}
+touchKey(document.getElementById('touchLeft'),'ArrowLeft');
+touchKey(document.getElementById('touchRight'),'ArrowRight');
+touchKey(document.getElementById('touchJump'),'ArrowUp');
+document.getElementById('musicToggle').addEventListener('pointerdown',e=>{e.preventDefault();toggleMusic();});
 let audio=null;function beep(freq,dur=0.06,type='sine',gain=.035){try{audio??=new AudioContext();let o=audio.createOscillator(),g=audio.createGain();o.type=type;o.frequency.value=freq;g.gain.value=gain;o.connect(g);g.connect(audio.destination);o.start();g.gain.exponentialRampToValueAtTime(.001,audio.currentTime+dur);o.stop(audio.currentTime+dur)}catch{}}
 const world={w:7600,h:1000};
 let cam=0,state='title',paused=false,score=0,samples=0,health=3,particles=[],msg='',msgT=0;
